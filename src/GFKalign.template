@@ -1,0 +1,88 @@
+#include<stdio.h>
+#include<stdlib.h>
+#include<mpi.h>
+
+int main( int argc, char *argv[]){
+     int nPE,myrank;
+     double ts, t0, t1;
+     double t_bowtie, t_blat, t_elapse;
+
+     MPI_Init(&argc,&argv);
+     MPI_Comm_size(MPI_COMM_WORLD,&nPE);
+     MPI_Comm_rank(MPI_COMM_WORLD,&myrank);
+
+     
+     //REFERENCE=../knownGene
+     //INDATA1=./GFKINPUT1
+     //INDATA2=./GFKINPUT2
+     //OUTDATA=./GFKOUTPUT
+
+     t_bowtie = 0.0;
+     t_blat   = 0.0;
+     t_elapse = 0.0;
+
+     if ( myrank == 0 ) fprintf(stderr,"GFK_message: sample#\tbowtie\tblat\telapse\n");
+     /////
+     ///// Sequence1
+     /////
+     /// my_mapRNA_bowtie.sh
+     //   bowtie mapping
+     ts = MPI_Wtime();
+     system("GFKDIR/bowtie -a --best --strata -m 20 -v 3 -S SHAREDDIR/knownGene ./GFKINPUT1 bowtie.tmp.sam");
+     t1 = MPI_Wtime();
+     t_bowtie = t1 - ts;
+     //  Convert to genomic coordinate
+     system("perl GFKDIR/convert2GenomicCoordinate.pl bowtie.tmp.sam SHAREDDIR/knownGene.info > temp");
+     system("perl GFKDIR/getUniqueReads.pl temp > bowtie.sam");
+     /// my_mapRNA_blat.sh
+     //   Gather Unmapped Information
+     system("perl GFKDIR/gatherUnmappedIntoFa.pl ./bowtie.tmp.sam > unmapped.fa");
+     //   blat mapping(my_blat.sh)
+     t0 = MPI_Wtime();
+     system("GFKDIR/blat -stepSize=5 -repMatch=2253 -ooc=SHAREDDIR/11.ooc SHAREDDIR/hg19.2bit ./unmapped.fa ./blat.psl");
+     t1 = MPI_Wtime();
+     t_blat = t1 - t0;
+     system("cat ./blat.psl.* > blat.psl"); //// For OpenMP
+     system("perl GFKDIR/my_psl2sam.pl ./blat.psl unmapped.fa blat 20 > blat.sam");
+     /// my_mapRNA_merge.sh
+     //   merge_bowtie_blat.sh
+     system("perl GFKDIR/merge_bowtie_blat.pl bowtie.sam blat.sam > aligned1.sam");
+
+     /////
+     ///// Sequence1
+     /////
+     /// my_mapRNA_bowtie.sh
+     //   bowtie mapping
+     t0 = MPI_Wtime();
+     system("GFKDIR/bowtie -a --best --strata -m 20 -v 3 -S SHAREDDIR/knownGene ./GFKINPUT2 bowtie.tmp.sam");
+     t1 = MPI_Wtime();
+     t_bowtie += t1 - t0;
+     //   Convert to genomic coordinate
+     system("perl GFKDIR/convert2GenomicCoordinate.pl bowtie.tmp.sam SHAREDDIR/knownGene.info > temp");
+     system("perl GFKDIR/getUniqueReads.pl temp > bowtie.sam");
+     /// my_mapRNA_blat.sh
+     //   Gather Unmapped Information
+     system("perl GFKDIR/gatherUnmappedIntoFa.pl ./bowtie.tmp.sam > unmapped.fa");
+     /// blat mapping(my_blat.sh)
+     t0 = MPI_Wtime();
+     system("GFKDIR/blat -stepSize=5 -repMatch=2253 -ooc=SHAREDDIR/11.ooc SHAREDDIR/hg19.2bit ./unmapped.fa ./blat.psl");
+     t1 = MPI_Wtime();
+     t_blat += t1 - t0;
+     system("cat ./blat.psl.* > blat.psl"); //// For OpenMP
+     system("perl GFKDIR/my_psl2sam.pl ./blat.psl unmapped.fa ./blat 20 > blat.sam");
+     /// my_mapRNA_merge.sh
+     //   merge_bowtie_blat.sh
+     system("perl GFKDIR/merge_bowtie_blat.pl bowtie.sam blat.sam > aligned2.sam");
+
+     /////
+     ///// mate_merge.sh
+     /////
+     system("perl GFKDIR/mateMerge.pl aligned1.sam aligned2.sam > ./GFKOUTPUT");
+     t1 = MPI_Wtime();
+     t_elapse = t1 - ts;
+
+     fprintf(stderr,"GFK_message: %d\t%e\t%e\t%e\n", myrank, t_bowtie, t_blat, t_elapse);
+
+     MPI_Finalize();
+     return 0; 
+}

@@ -1,0 +1,42 @@
+diff --git a/ebwt.h b/ebwt.h
+index 22ad5ed..70d4928 100644
+--- a/ebwt.h
++++ b/ebwt.h
+@@ -656,7 +656,7 @@ public:
+ 			VMSG_NL("bmax according to bmaxDivN setting: " << bmax);
+ 		}
+ 		else {
+-			bmax = (uint32_t)sqrt(length(s));
++			bmax = (uint32_t)sqrt((double)length(s));
+ 			VMSG_NL("bmax defaulted to: " << bmax);
+ 		}
+ 		int iter = 0;
+diff --git a/hit.h b/hit.h
+index 5f6d504..b82c2e2 100644
+--- a/hit.h
++++ b/hit.h
+@@ -494,7 +494,6 @@ public:
+ 		if(_outs.size() > 1 && end-start > 2) {
+ 			sort(hs.begin() + start, hs.begin() + end);
+ 		}
+-		char buf[4096];
+ 		for(size_t i = start; i < end; i++) {
+ 			const Hit& h = hs[i];
+ 			assert(h.repOk());
+@@ -503,13 +502,13 @@ public:
+ 				diff = (refIdxToStreamIdx(h.h.first) != refIdxToStreamIdx(hs[i-1].h.first));
+ 				if(diff) unlock(hs[i-1].h.first);
+ 			}
+-			ostringstream ss(ssmode_);
+-			ss.rdbuf()->pubsetbuf(buf, 4096);
++			stringbuf buf;
++			ostream ss(&buf);
+ 			append(ss, h);
+ 			if(i == start || diff) {
+ 				lock(h.h.first);
+ 			}
+-			out(h.h.first).writeChars(buf, ss.tellp());
++			out(h.h.first).writeString(buf.str());
+ 		}
+ 		unlock(hs[end-1].h.first);
+ 		mainlock();

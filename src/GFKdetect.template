@@ -1,0 +1,279 @@
+#include<stdio.h>
+#include<stdlib.h>
+#include<mpi.h>
+#include<omp.h>
+
+#define LIST 44
+#define MAX_RANK 2048
+
+static
+char region[LIST][64] = {
+     "chr1:9700-103864206",
+     "chr1:103913606-223748146",
+     "chr1:223797546-249240921",
+     "chr2:9700-87668506",
+     "chr2:87717906-234004041",
+     "chr2:234053441-243189673",
+     "chr3:59700-66170570",
+     "chr3:66269970-194042261",
+     "chr3:194046951-197962730",
+     "chr4:9700-191044576",
+     "chr5:9700-91636428",
+     "chr5:91685828-180905560",
+     "chr6:59700-58087959",
+     "chr6:58137359-157559767",
+     "chr6:157609167-171055367",
+     "chr7:9700-100556343",
+     "chr7:100605743-159128963",
+     "chr8:9700-86576751",
+     "chr8:86726151-146304322",
+     "chr9:9700-40940641",
+     "chr9:40990041-141153731",
+     "chr10:59700-125869772",
+     "chr10:125919172-135525047",
+     "chr11:59700-87688678",
+     "chr11:87738078-134946816",
+     "chr12:59700-109373770",
+     "chr12:109423170-133842195",
+     "chr13:19019700-86760624",
+     "chr13:86910024-115110178",
+     "chr14:18999700-107289840",
+     "chr15:19999700-102521692",
+     "chr16:59700-88389683",
+     "chr16:88439083-90295053",
+     "chr17:0-81195510",
+     "chr18:9700-72283653",
+     "chr18:72333053-78017548",
+     "chr19:59700-59119283",
+     "chr20:59700-61091737",
+     "chr20:61141137-62965820",
+     "chr21:9410893-48120195",
+     "chr22:16049700-51244866",
+     "chrX:59700-113517968",
+     "chrX:113567368-155260860",
+     "chrY:9700-59363866"
+};
+
+
+int main( int argc, char *argv[] )
+{
+     int    nPE,myrank;
+     int    i, sample, thread;
+     char   buff[1024];
+
+     double t0, t1, ts;
+     double t_pre;
+     double t_juncBlat, t_catCand, t_makeComb;
+     double t_Contig, t_Primer, t_elapse;
+
+     MPI_Comm barrier[MAX_RANK];
+
+
+
+     MPI_Init(&argc,&argv);
+     MPI_Comm_size(MPI_COMM_WORLD,&nPE);
+     MPI_Comm_rank(MPI_COMM_WORLD,&myrank);
+
+     //--- Asign sample number & thread number(in 1 sample), then split communicator
+     if ( nPE >= MAX_RANK*LIST ){
+	  fprintf(stderr,"GFK_error: Number of process(%d) is exceeded maximum value.\n", nPE);
+	  exit(0);
+     } else {
+	  sample = myrank / LIST;
+	  thread = myrank % LIST;
+
+	  MPI_Comm_split(MPI_COMM_WORLD, sample, myrank, &barrier[sample]);
+     }
+
+     ts = MPI_Wtime();
+     /************************************************************************
+     * GFKdetectPre   --- nSample parallel ---                               *
+     *   Input: GFKdedup.{num}.bam                                           *
+     *      --- Sorted & PCR duplicate removed                               *
+     *   Output: {num}.sam                                                   *
+     *      --- #_sample * LIST series of sam files                          *
+     ************************************************************************/
+
+     //--- Extract chromosonal region
+     sprintf(buff,"GFKDIR/samtools view -h -F 1024 SHAREDDIR/GFKdedup.%d.bam %s > ./%d.sam",sample,region[thread],myrank);
+     system(buff);
+     
+     t1 = MPI_Wtime();
+
+     t_pre = t1 - ts;
+
+     /************************************************************************
+     * GFKdetect1   --- LIST*nSample parallel ---                            *
+     *   Input: {num}.sam                                                    *
+     *      ---  #_sample * LIST series of sam files                         *
+     *   Output: juncList_anno{1-4}.{num}.txt                                *
+     *      ---  Candidate fusion gene list                                  *
+     ************************************************************************/
+
+     //---
+     //--- juncBlat.sh
+     //---
+     if ( myrank == 0 ) fprintf(stderr,"juncBlat start.\n\n");
+
+     sprintf(buff,"perl GFKDIR/getCandJunc.pl ./%d.sam 20 16 > ./candJunc.%d.fa",myrank,myrank); //Perfect mutch
+     system(buff);
+
+     sprintf(buff,"GFKDIR/blat -stepSize=5 -repMatch=2253 -minScore=20 -ooc=GFKDIR/11.ooc GFKDIR/hg19.2bit ./candJunc.%d.fa ./candJunc.%d.psl",myrank,myrank);
+     system(buff);
+#ifdef BLAT_OPENMP
+     sprintf(buff,"cat ./candJunc.%d.psl.* > ./candJunc.%d.psl",myrank,myrank);
+     system(buff);
+#endif
+#ifndef GFK_NO_CLEANUP
+     sprintf(buff,"rm -f ./candJunc.%d.psl.*",myrank);
+     system(buff);
+#endif
+
+     sprintf(buff,"perl GFKDIR/psl2junction.pl ./candJunc.%d.psl SHAREDDIR/countJunc.%d.%d.txt SHAREDDIR/junc2ID.%d.%d.txt",myrank,sample,thread,sample,thread);
+     system(buff);
+#ifndef GFK_NO_CLEANUP
+     sprintf(buff,"rm -f ./candJunc.%d.fa ./candJunc.%d.psl",myrank,myrank); //--- Clean up!
+     system(buff);
+#endif
+     //--- Barrier
+     MPI_Barrier(barrier[sample]);
+
+     //Merge files
+     if ( myrank%LIST == 0 ){
+	  //--- Initialize of files
+	  sprintf(buff,"echo -n > SHAREDDIR/countJunc.%d.txt",sample);
+	  system(buff);
+	  sprintf(buff,"echo -n > SHAREDDIR/junc2ID.%d.txt",sample);
+	  system(buff);
+	  
+	  for ( i = 0; i < LIST; i++ ){
+	       sprintf(buff,"cat SHAREDDIR/countJunc.%d.%d.txt >> SHAREDDIR/countJunc.%d.txt",sample,i,sample); // --- Different order, same contents
+	       system(buff);
+#ifndef GFK_NO_CLEANUP
+	       sprintf(buff,"rm -f SHAREDDIR/countJunc.%d.%d.txt",sample,i); //--- Clean up!
+     	       system(buff);
+#endif
+
+	  }
+
+	  for ( i = 0; i < LIST; i++ ){
+	       sprintf(buff,"cat SHAREDDIR/junc2ID.%d.%d.txt >> SHAREDDIR/junc2ID.%d.txt",sample,i,sample);
+	       system(buff);
+#ifndef GFK_NO_CLEANUP
+     	       sprintf(buff,"rm -f SHAREDDIR/junc2ID.%d.%d.txt",sample,i); //--- Clean up!
+	       system(buff);
+#endif
+	  }
+	  
+     }
+
+     t0 = MPI_Wtime();
+     t_juncBlat = t0 - t1;
+     
+
+     //---
+     //--- catCandFusion.sh
+     //---
+
+     //--- Barrier
+     MPI_Barrier(barrier[sample]);
+     if ( myrank%LIST == 0 ){
+	  fprintf(stderr,"catCandFusion start.\n\n");
+	  sprintf(buff,"GFKDIR/catCandFusion.sh GFKDIR SHAREDDIR %d", sample);
+	  system(buff);
+#ifndef GFK_NO_CLEANUP
+	  sprintf(buff,"rm -f ./candJunc.%d.fa ./candJunc.%d.psl",myrank,myrank); //--- Clean up!
+	  system(buff);
+#endif
+     }
+     t1 = MPI_Wtime();
+     t_catCand = t1 - t0;
+
+
+     //---
+     //--- makeComb2seq.sh
+     //---
+
+     //--- Barrier
+     MPI_Barrier(barrier[sample]);
+
+     if ( myrank == 0 ) fprintf(stderr,"makeComb2seq start.\n\n");
+     //sprintf(buff,"GFKDIR/makeComb2seq.sh GFKDIR SHAREDDIR %d %d %d",myrank, sample, thread);
+     sprintf(buff,"perl GFKDIR/makeComb2seq.pl SHAREDDIR/comb2ID2.%d.txt ./%d.sam > SHAREDDIR/comb2seq.tmp.%d.%d.txt",sample,myrank,sample,thread); 
+     system(buff);
+#ifndef GFK_NO_CLEANUP
+     sprintf(buff,"rm -f ./%d.sam",myrank); //--- Clean up!
+     system(buff);
+#endif
+
+     //--- Barrier
+     MPI_Barrier(barrier[sample]);
+
+     if ( myrank%LIST == 0 ){
+	  //--- Initialize of files
+	  sprintf(buff,"echo -n > SHAREDDIR/comb2seq.tmp.%d.txt",sample);
+	  system(buff);
+	  
+	  for ( i = 0; i < LIST; i++ ){
+	       sprintf(buff,"cat SHAREDDIR/comb2seq.tmp.%d.%d.txt >> SHAREDDIR/comb2seq.tmp.%d.txt",sample,i,sample);
+	       system(buff);
+#ifndef GFK_NO_CLEANUP
+	       sprintf(buff,"rm -f SHAREDDIR/comb2seq.tmp.%d.%d.txt",sample,i); //--- Clean up!
+	       system(buff);
+#endif
+	  }
+     }
+
+     t0 = MPI_Wtime();
+     t_makeComb = t0 - t1;
+
+
+
+     /************************************************************************
+     * GFKdetect2   --- nSample parallel ---                                 *
+     *   Input: {num}.sam, juncList_anno4.{num}.txt                          *
+     *      ---  #_sample * 44 series of sam files                           *
+     *   Output: juncList_anno{5-10}.{num}.txt, fusion.*.txt                 *
+     *      ---  Final result                                                *
+     ************************************************************************/
+     //---     
+     //--- makeContig.sh
+     //---
+
+     if ( myrank == 0 ) fprintf(stderr,"makeContig start.\n\n");
+
+#ifdef BLAT_OPENMP     
+     sprintf(buff,"GFKDIR/makeContig_SOAP.sh GFKDIR SHAREDDIR %d 1",sample);
+#else
+     sprintf(buff,"GFKDIR/makeContig_SOAP.sh GFKDIR SHAREDDIR %d 0",sample);
+#endif
+     if ( myrank%LIST == 0 ) system(buff);
+
+
+     t1 = MPI_Wtime();
+     t_Contig = t1 - t0;
+
+     //---
+     //--- makePrimer.sh
+     //---
+
+     if ( myrank%LIST == 0 ) fprintf(stderr,"makePrimer start.\n\n");
+
+#ifdef BLAT_OPENMP     
+     sprintf(buff,"GFKDIR/makePrimer.sh GFKDIR %d 1",sample);
+#else
+     sprintf(buff,"GFKDIR/makePrimer.sh GFKDIR %d 0",sample);
+#endif
+     if ( myrank%LIST == 0 ) system(buff);
+
+     t0 = MPI_Wtime();
+     t_Primer = t0 - t1;
+
+     t_elapse = t0 - ts;
+
+     if ( myrank == 0 ) fprintf(stderr,"GFK_message: rank\tPre\tjuncBlat\tcatCandFusion\tmakeComb\tmakeContig\tmakePrimer\tElapse\n");
+     fprintf(stderr,"GFK_message: %d\t%e\t%e\t%e\t%e\t%e\t%e\t%e\n", myrank, t_pre, t_juncBlat, t_catCand, t_makeComb, t_Contig, t_Primer, t_elapse);
+
+     MPI_Finalize();
+     return 0; 
+}

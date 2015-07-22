@@ -1,0 +1,53 @@
+#include<stdio.h>
+#include<stdlib.h>
+#include<mpi.h>
+
+int main( int argc, char *argv[]){
+     int    nPE,myrank;
+     double t0, t1, t_view, t_sort, t_rmdup, t_index;
+     
+     char buff[1024];
+     
+     MPI_Init(&argc,&argv);
+     MPI_Comm_size(MPI_COMM_WORLD,&nPE);
+     MPI_Comm_rank(MPI_COMM_WORLD,&myrank);
+
+     if ( myrank == 0 ) fprintf(stderr,"GFK_message: sample#\tview\tsort\trmdup\tindex\n");
+
+     /* ------------- Generate command strings ----------- */
+     t0 = MPI_Wtime();
+     sprintf(buff,"GFKDIR/samtools view -Sb GFKaligned.%d > %d.bam", myrank, myrank);
+     system(buff);
+     t1 = MPI_Wtime();
+     t_view = t1 - t0;     
+     sprintf(buff,"rm -f GFKaligned.%d", myrank);
+     system(buff);
+
+     t0 = MPI_Wtime();
+     sprintf(buff,"GFKDIR/samtools sort -m 7G %d.bam %d.sorted", myrank, myrank);
+     system(buff);
+     t1 = MPI_Wtime();
+     t_sort = t1 - t0;     
+
+     sprintf(buff,"rm -f %d.bam", myrank);
+     system(buff);
+
+     t0 = MPI_Wtime();
+     sprintf(buff,"GFKDIR/samtools rmdup %d.sorted.bam GFKdedup.%d.bam", myrank, myrank);
+     system(buff);
+     t1 = MPI_Wtime();
+     t_rmdup = t1 - t0;     
+
+     sprintf(buff,"rm -f %d.sorted.bam", myrank);
+     system(buff);
+
+     t0 = MPI_Wtime();
+     sprintf(buff,"GFKDIR/samtools index GFKdedup.%d.bam", myrank);
+     system(buff);
+     t1 = MPI_Wtime();
+     t_index = t1 - t0;     
+
+     fprintf(stderr,"GFK_message: %d\t%lf\t%lf\t%lf\t%lf\n",myrank,t_view,t_sort,t_rmdup,t_index);
+     MPI_Finalize();
+     return 0; 
+}

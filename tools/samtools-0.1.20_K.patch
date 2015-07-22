@@ -1,0 +1,909 @@
+diff --git a/bam.c b/bam.c
+index 43afa2d..2e54279 100644
+--- a/bam.c
++++ b/bam.c
+@@ -18,14 +18,26 @@ uint32_t bam_calend(const bam1_core_t *c, const uint32_t *cigar)
+ {
+ 	int k, end = c->pos;
+ 	for (k = 0; k < c->n_cigar; ++k) {
++#ifdef __sparc
++		uint32_t cigar_k = get_uint32(cigar+k);
++		int op  = bam_cigar_op(cigar_k);
++		int len = bam_cigar_oplen(cigar_k);
++#else
+ 		int op  = bam_cigar_op(cigar[k]);
+ 		int len = bam_cigar_oplen(cigar[k]);
++#endif
+ 		if (op == BAM_CBACK) { // move backward
+ 			int l, u, v;
+ 			if (k == c->n_cigar - 1) break; // skip trailing 'B'
+ 			for (l = k - 1, u = v = 0; l >= 0; --l) {
++#ifdef __sparc
++				uint32_t cigar_l = get_uint32(cigar+l);
++				int op1  = bam_cigar_op(cigar_l);
++				int len1 = bam_cigar_oplen(cigar_l);
++#else
+ 				int op1  = bam_cigar_op(cigar[l]);
+ 				int len1 = bam_cigar_oplen(cigar[l]);
++#endif
+ 				if (bam_cigar_type(op1)&1) { // consume query
+ 					if (u + len1 >= len) { // stop
+ 						if (bam_cigar_type(op1)&2) v += len - u;
+@@ -35,7 +47,11 @@ uint32_t bam_calend(const bam1_core_t *c, const uint32_t *cigar)
+ 				if (bam_cigar_type(op1)&2) v += len1;
+ 			}
+ 			end = l < 0? c->pos : end - v;
++#ifdef __sparc
++		} else if (bam_cigar_type(op)&2) end += bam_cigar_oplen(cigar_k);
++#else
+ 		} else if (bam_cigar_type(op)&2) end += bam_cigar_oplen(cigar[k]);
++#endif
+ 	}
+ 	return end;
+ }
+@@ -44,9 +60,17 @@ int32_t bam_cigar2qlen(const bam1_core_t *c, const uint32_t *cigar)
+ {
+ 	uint32_t k;
+ 	int32_t l = 0;
++#ifdef __sparc
++	for (k = 0; k < c->n_cigar; ++k) {
++		uint32_t cigar_k = get_uint32(cigar+k);
++		if (bam_cigar_type(bam_cigar_op(cigar_k))&1)
++			l += bam_cigar_oplen(cigar_k);
++	}
++#else
+ 	for (k = 0; k < c->n_cigar; ++k)
+ 		if (bam_cigar_type(bam_cigar_op(cigar[k]))&1)
+ 			l += bam_cigar_oplen(cigar[k]);
++#endif
+ 	return l;
+ }
+ 
+@@ -281,8 +305,14 @@ char *bam_format1_core(const bam_header_t *header, const bam1_t *b, int of)
+ 	else {
+ 		uint32_t *cigar = bam1_cigar(b);
+ 		for (i = 0; i < c->n_cigar; ++i) {
++#ifdef __sparc
++			uint32_t cigar_i = get_uint32(cigar+i);
++			kputw(cigar_i>>BAM_CIGAR_SHIFT, &str);
++			kputc(bam_cigar_opchr(cigar_i), &str);
++#else
+ 			kputw(bam1_cigar(b)[i]>>BAM_CIGAR_SHIFT, &str);
+ 			kputc(bam_cigar_opchr(cigar[i]), &str);
++#endif
+ 		}
+ 	}
+ 	kputc('\t', &str);
+@@ -309,12 +339,21 @@ char *bam_format1_core(const bam_header_t *header, const bam1_t *b, int of)
+ 		if (type == 'A') { kputsn("A:", 2, &str); kputc(*s, &str); ++s; }
+ 		else if (type == 'C') { kputsn("i:", 2, &str); kputw(*s, &str); ++s; }
+ 		else if (type == 'c') { kputsn("i:", 2, &str); kputw(*(int8_t*)s, &str); ++s; }
++#ifdef __sparc
++		else if (type == 'S') { kputsn("i:", 2, &str); kputw(get_uint16(s), &str); s += 2; }
++		else if (type == 's') { kputsn("i:", 2, &str); kputw(get_int16(s), &str); s += 2; }
++		else if (type == 'I') { kputsn("i:", 2, &str); kputuw(get_uint32(s), &str); s += 4; }
++		else if (type == 'i') { kputsn("i:", 2, &str); kputw(get_int32(s), &str); s += 4; }
++		else if (type == 'f') { ksprintf(&str, "f:%g", get_float(s)); s += 4; }
++		else if (type == 'd') { ksprintf(&str, "d:%lg", get_double(s)); s += 8; }
++#else
+ 		else if (type == 'S') { kputsn("i:", 2, &str); kputw(*(uint16_t*)s, &str); s += 2; }
+ 		else if (type == 's') { kputsn("i:", 2, &str); kputw(*(int16_t*)s, &str); s += 2; }
+ 		else if (type == 'I') { kputsn("i:", 2, &str); kputuw(*(uint32_t*)s, &str); s += 4; }
+ 		else if (type == 'i') { kputsn("i:", 2, &str); kputw(*(int32_t*)s, &str); s += 4; }
+ 		else if (type == 'f') { ksprintf(&str, "f:%g", *(float*)s); s += 4; }
+ 		else if (type == 'd') { ksprintf(&str, "d:%lg", *(double*)s); s += 8; }
++#endif
+ 		else if (type == 'Z' || type == 'H') { kputc(type, &str); kputc(':', &str); while (*s) kputc(*s++, &str); ++s; }
+ 		else if (type == 'B') {
+ 			uint8_t sub_type = *(s++);
+@@ -326,11 +365,19 @@ char *bam_format1_core(const bam_header_t *header, const bam1_t *b, int of)
+ 				kputc(',', &str);
+ 				if ('c' == sub_type || 'c' == sub_type) { kputw(*(int8_t*)s, &str); ++s; }
+ 				else if ('C' == sub_type) { kputw(*(uint8_t*)s, &str); ++s; }
++#ifdef __sparc
++				else if ('s' == sub_type) { kputw(get_int16(s), &str); s += 2; }
++				else if ('S' == sub_type) { kputw(get_uint16(s), &str); s += 2; }
++				else if ('i' == sub_type) { kputw(get_int32(s), &str); s += 4; }
++				else if ('I' == sub_type) { kputuw(get_uint32(s), &str); s += 4; }
++				else if ('f' == sub_type) { ksprintf(&str, "%g", get_float(s)); s += 4; }
++#else
+ 				else if ('s' == sub_type) { kputw(*(int16_t*)s, &str); s += 2; }
+ 				else if ('S' == sub_type) { kputw(*(uint16_t*)s, &str); s += 2; }
+ 				else if ('i' == sub_type) { kputw(*(int32_t*)s, &str); s += 4; }
+ 				else if ('I' == sub_type) { kputuw(*(uint32_t*)s, &str); s += 4; }
+ 				else if ('f' == sub_type) { ksprintf(&str, "%g", *(float*)s); s += 4; }
++#endif
+ 			}
+ 		}
+ 	}
+@@ -388,9 +435,17 @@ int bam_remove_B(bam1_t *b)
+ 	if (b->core.flag & BAM_FUNMAP) return 0; // unmapped; do nothing
+ 	cigar = bam1_cigar(b);
+ 	for (k = 0; k < b->core.n_cigar; ++k)
++#ifdef __sparc
++		if (bam_cigar_op(get_uint32(cigar+k)) == BAM_CBACK) break;
++#else
+ 		if (bam_cigar_op(cigar[k]) == BAM_CBACK) break;
++#endif
+ 	if (k == b->core.n_cigar) return 0; // no 'B'
++#ifdef __sparc
++	if (bam_cigar_op(get_uint32(cigar)) == BAM_CBACK) goto rmB_err; // cannot be removed
++#else
+ 	if (bam_cigar_op(cigar[0]) == BAM_CBACK) goto rmB_err; // cannot be removed
++#endif
+ 	// allocate memory for the new CIGAR
+ 	if (b->data_len + (b->core.n_cigar + 1) * 4 > b->m_data) { // not enough memory
+ 		b->m_data = b->data_len + b->core.n_cigar * 4;
+@@ -404,27 +459,51 @@ int bam_remove_B(bam1_t *b)
+ 	no_qual = (qual[0] == 0xff); // test whether base quality is available
+ 	i = j = 0; end_j = -1;
+ 	for (k = l = 0; k < b->core.n_cigar; ++k) {
++#ifdef __sparc
++		uint32_t cigar_k = get_uint32(cigar+k);
++		int op  = bam_cigar_op(cigar_k);
++		int len = bam_cigar_oplen(cigar_k);
++#else
+ 		int op  = bam_cigar_op(cigar[k]);
+ 		int len = bam_cigar_oplen(cigar[k]);
++#endif
+ 		if (op == BAM_CBACK) { // the backward operation
+ 			int t, u;
+ 			if (k == b->core.n_cigar - 1) break; // ignore 'B' at the end of CIGAR
+ 			if (len > j) goto rmB_err; // an excessively long backward
+ 			for (t = l - 1, u = 0; t >= 0; --t) { // look back
++#ifdef __sparc
++				uint32_t new_cigar_t = get_uint32(new_cigar+t);
++				int op1  = bam_cigar_op(new_cigar_t);
++				int len1 = bam_cigar_oplen(new_cigar_t);
++#else
+ 				int op1  = bam_cigar_op(new_cigar[t]);
+ 				int len1 = bam_cigar_oplen(new_cigar[t]);
++#endif
+ 				if (bam_cigar_type(op1)&1) { // consume the query
+ 					if (u + len1 >= len) { // stop
++#ifdef __sparc
++						new_cigar_t -= (len - u) << BAM_CIGAR_SHIFT;
++#else
+ 						new_cigar[t] -= (len - u) << BAM_CIGAR_SHIFT;
++#endif
+ 						break;
+ 					} else u += len1;
+ 				}
+ 			}
++#ifdef __sparc
++			if (bam_cigar_oplen(get_uint32(new_cigar+t)) == 0) --t; // squeeze out the zero-length operation
++#else
+ 			if (bam_cigar_oplen(new_cigar[t]) == 0) --t; // squeeze out the zero-length operation
++#endif
+ 			l = t + 1;
+ 			end_j = j; j -= len;
+ 		} else { // other CIGAR operations
++#ifdef __sparc
++			set_uint32(new_cigar+(l++), cigar_k);
++#else
+ 			new_cigar[l++] = cigar[k];
++#endif
+ 			if (bam_cigar_type(op)&1) { // consume the query
+ 				if (i != j) { // no need to copy if i == j
+ 					int u, c, c0;
+@@ -450,13 +529,32 @@ int bam_remove_B(bam1_t *b)
+ 	}
+ 	if (no_qual) qual[0] = 0xff; // in very rare cases, this may be modified
+ 	// merge adjacent operations if possible
++#ifdef __sparc
++	for (k = 1; k < l; ++k) {
++		uint32_t new_cigar_k = get_uint32(new_cigar+k);
++		uint32_t new_cigar_k1 = get_uint32(new_cigar+k-1);
++		if (bam_cigar_op(new_cigar_k) == bam_cigar_op(new_cigar_k1)) {
++			set_uint32(new_cigar+k, new_cigar_k + (new_cigar_k1 >> BAM_CIGAR_SHIFT << BAM_CIGAR_SHIFT));
++			set_uint32(new_cigar+k-1, new_cigar_k1 & 0xf);
++		}
++	}
++#else
+ 	for (k = 1; k < l; ++k)
+ 		if (bam_cigar_op(new_cigar[k]) == bam_cigar_op(new_cigar[k-1]))
+ 			new_cigar[k] += new_cigar[k-1] >> BAM_CIGAR_SHIFT << BAM_CIGAR_SHIFT, new_cigar[k-1] &= 0xf;
++#endif
+ 	// kill zero length operations
++#ifdef __sparc
++	for (k = i = 0; k < l; ++k) {
++		uint32_t new_cigar_k = get_uint32(new_cigar+k);
++		if (new_cigar_k >> BAM_CIGAR_SHIFT)
++			set_uint32(new_cigar+(i++), new_cigar_k);
++	}
++#else
+ 	for (k = i = 0; k < l; ++k)
+ 		if (new_cigar[k] >> BAM_CIGAR_SHIFT)
+ 			new_cigar[i++] = new_cigar[k];
++#endif
+ 	l = i;
+ 	// update b
+ 	memcpy(cigar, new_cigar, l * 4); // set CIGAR
+diff --git a/bam.h b/bam.h
+index 5742a81..6d796a7 100644
+--- a/bam.h
++++ b/bam.h
+@@ -794,4 +794,115 @@ typedef bam_header_t bam_hdr_t;
+ #define bam_hdr_write(fp, h) bam_header_write(fp, h)
+ #define bam_hdr_destroy(fp) bam_header_destroy(fp)
+ 
++
++#ifdef __sparc
++static inline uint16_t get_uint16(const void* p)
++{
++  uint16_t v;
++	((uint8_t*)&v)[0] = ((uint8_t*)p)[0];
++	((uint8_t*)&v)[1] = ((uint8_t*)p)[1];
++	return v;
++}
++
++static inline void set_uint16(const void* p, uint16_t v)
++{
++	((uint8_t*)p)[0] = ((uint8_t*)&v)[0];
++	((uint8_t*)p)[1] = ((uint8_t*)&v)[1];
++}
++
++static inline int16_t get_int16(const void* p)
++{
++	int16_t v;
++	((uint8_t*)&v)[0] = ((uint8_t*)p)[0];
++	((uint8_t*)&v)[1] = ((uint8_t*)p)[1];
++	return v;
++}
++
++static inline void set_int16(const void* p, int16_t v)
++{
++	((uint8_t*)p)[0] = ((uint8_t*)&v)[0];
++	((uint8_t*)p)[1] = ((uint8_t*)&v)[1];
++}
++
++static inline uint32_t get_uint32(const void* p)
++{
++	uint32_t v;
++	((uint8_t*)&v)[0] = ((uint8_t*)p)[0];
++	((uint8_t*)&v)[1] = ((uint8_t*)p)[1];
++	((uint8_t*)&v)[2] = ((uint8_t*)p)[2];
++	((uint8_t*)&v)[3] = ((uint8_t*)p)[3];
++	return v;
++}
++
++static inline void set_uint32(const void* p, uint32_t v)
++{
++	((uint8_t*)p)[0] = ((uint8_t*)&v)[0];
++	((uint8_t*)p)[1] = ((uint8_t*)&v)[1];
++	((uint8_t*)p)[2] = ((uint8_t*)&v)[2];
++	((uint8_t*)p)[3] = ((uint8_t*)&v)[3];
++}
++
++static inline int32_t get_int32(const void* p)
++{
++	int32_t v;
++	((uint8_t*)&v)[0] = ((uint8_t*)p)[0];
++	((uint8_t*)&v)[1] = ((uint8_t*)p)[1];
++	((uint8_t*)&v)[2] = ((uint8_t*)p)[2];
++	((uint8_t*)&v)[3] = ((uint8_t*)p)[3];
++	return v;
++}
++
++static inline void set_int32(const void* p, int32_t v)
++{
++	((uint8_t*)p)[0] = ((uint8_t*)&v)[0];
++	((uint8_t*)p)[1] = ((uint8_t*)&v)[1];
++	((uint8_t*)p)[2] = ((uint8_t*)&v)[2];
++	((uint8_t*)p)[3] = ((uint8_t*)&v)[3];
++}
++
++static inline float get_float(const void* p)
++{
++	float v;
++	((uint8_t*)&v)[0] = ((uint8_t*)p)[0];
++	((uint8_t*)&v)[1] = ((uint8_t*)p)[1];
++	((uint8_t*)&v)[2] = ((uint8_t*)p)[2];
++	((uint8_t*)&v)[3] = ((uint8_t*)p)[3];
++	return v;
++}
++
++static inline void set_float(const void* p, float v)
++{
++	((uint8_t*)p)[0] = ((uint8_t*)&v)[0];
++	((uint8_t*)p)[1] = ((uint8_t*)&v)[1];
++	((uint8_t*)p)[2] = ((uint8_t*)&v)[2];
++	((uint8_t*)p)[3] = ((uint8_t*)&v)[3];
++}
++
++static inline double get_double(const void* p)
++{
++	double v;
++	((uint8_t*)&v)[0] = ((uint8_t*)p)[0];
++	((uint8_t*)&v)[1] = ((uint8_t*)p)[1];
++	((uint8_t*)&v)[2] = ((uint8_t*)p)[2];
++	((uint8_t*)&v)[3] = ((uint8_t*)p)[3];
++	((uint8_t*)&v)[4] = ((uint8_t*)p)[4];
++	((uint8_t*)&v)[5] = ((uint8_t*)p)[5];
++	((uint8_t*)&v)[6] = ((uint8_t*)p)[6];
++	((uint8_t*)&v)[7] = ((uint8_t*)p)[7];
++	return v;
++}
++
++static inline void set_double(const void* p, double v)
++{
++	((uint8_t*)p)[0] = ((uint8_t*)&v)[0];
++	((uint8_t*)p)[1] = ((uint8_t*)&v)[1];
++	((uint8_t*)p)[2] = ((uint8_t*)&v)[2];
++	((uint8_t*)p)[3] = ((uint8_t*)&v)[3];
++	((uint8_t*)p)[4] = ((uint8_t*)&v)[4];
++	((uint8_t*)p)[5] = ((uint8_t*)&v)[5];
++	((uint8_t*)p)[6] = ((uint8_t*)&v)[6];
++	((uint8_t*)p)[7] = ((uint8_t*)&v)[7];
++}
++#endif
++
+ #endif
+diff --git a/bam2bcf_indel.c b/bam2bcf_indel.c
+index bf309d6..a3150f8 100644
+--- a/bam2bcf_indel.c
++++ b/bam2bcf_indel.c
+@@ -64,8 +64,14 @@ static int tpos2qpos(const bam1_core_t *c, const uint32_t *cigar, int32_t tpos,
+ 	int k, x = c->pos, y = 0, last_y = 0;
+ 	*_tpos = c->pos;
+ 	for (k = 0; k < c->n_cigar; ++k) {
++#ifdef __sparc
++		uint32_t cigar_k = get_uint32(cigar+k);
++		int op = cigar_k & BAM_CIGAR_MASK;
++		int l = cigar_k >> BAM_CIGAR_SHIFT;
++#else
+ 		int op = cigar[k] & BAM_CIGAR_MASK;
+ 		int l = cigar[k] >> BAM_CIGAR_SHIFT;
++#endif
+ 		if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF) {
+ 			if (c->pos > tpos) return y;
+ 			if (x + l > tpos) {
+@@ -247,8 +253,14 @@ int bcf_call_gap_prep(int n, int *n_plp, bam_pileup1_t **plp, int pos, bcf_calla
+ 				uint8_t *seq = bam1_seq(b);
+ 				int x = b->core.pos, y = 0;
+ 				for (k = 0; k < b->core.n_cigar; ++k) {
++#ifdef __sparc
++					uint32_t cigar_k = get_uint32(cigar+k);
++					int op = cigar_k&0xf;
++					int j, l = cigar_k>>4;
++#else
+ 					int op = cigar[k]&0xf;
+ 					int j, l = cigar[k]>>4;
++#endif
+ 					if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF) {
+ 						for (j = 0; j < l; ++j)
+ 							if (x + j >= left && x + j < right)
+@@ -359,7 +371,11 @@ int bcf_call_gap_prep(int n, int *n_plp, bam_pileup1_t **plp, int pos, bcf_calla
+ 				if (p->b->core.flag&4) continue; // unmapped reads
+ 				// FIXME: the following loop should be better moved outside; nonetheless, realignment should be much slower anyway.
+ 				for (kk = 0; kk < p->b->core.n_cigar; ++kk)
++#ifdef __sparc
++					if ((get_uint32(cigar+kk)&BAM_CIGAR_MASK) == BAM_CREF_SKIP) break;
++#else
+ 					if ((cigar[kk]&BAM_CIGAR_MASK) == BAM_CREF_SKIP) break;
++#endif
+ 				if (kk < p->b->core.n_cigar) continue;
+ 				// FIXME: the following skips soft clips, but using them may be more sensitive.
+ 				// determine the start and end of sequences for alignment
+diff --git a/bam_aux.c b/bam_aux.c
+index 4bbf975..6d92075 100644
+--- a/bam_aux.c
++++ b/bam_aux.c
+@@ -167,9 +167,15 @@ int32_t bam_aux2i(const uint8_t *s)
+ 	type = *s++;
+ 	if (type == 'c') return (int32_t)*(int8_t*)s;
+ 	else if (type == 'C') return (int32_t)*(uint8_t*)s;
++#ifdef __sparc
++	else if (type == 's') return (int32_t)get_int16(s);
++	else if (type == 'S') return (int32_t)get_uint16(s);
++	else if (type == 'i' || type == 'I') return get_int32(s);
++#else
+ 	else if (type == 's') return (int32_t)*(int16_t*)s;
+ 	else if (type == 'S') return (int32_t)*(uint16_t*)s;
+ 	else if (type == 'i' || type == 'I') return *(int32_t*)s;
++#endif
+ 	else return 0;
+ }
+ 
+@@ -178,7 +184,11 @@ float bam_aux2f(const uint8_t *s)
+ 	int type;
+ 	type = *s++;
+ 	if (s == 0) return 0.0;
++#ifdef __sparc
++	if (type == 'f') return get_float(s);
++#else
+ 	if (type == 'f') return *(float*)s;
++#endif
+ 	else return 0.0;
+ }
+ 
+@@ -187,7 +197,11 @@ double bam_aux2d(const uint8_t *s)
+ 	int type;
+ 	type = *s++;
+ 	if (s == 0) return 0.0;
++#ifdef __sparc
++	if (type == 'd') return get_double(s);
++#else
+ 	if (type == 'd') return *(double*)s;
++#endif
+ 	else return 0.0;
+ }
+ 
+diff --git a/bam_endian.h b/bam_endian.h
+index 0fc74a8..94d41b3 100644
+--- a/bam_endian.h
++++ b/bam_endian.h
+@@ -14,7 +14,13 @@ static inline uint16_t bam_swap_endian_2(uint16_t v)
+ }
+ static inline void *bam_swap_endian_2p(void *x)
+ {
++#ifdef __sparc
++	uint8_t t = ((uint8_t*)x)[0];
++	((uint8_t*)x)[0] = ((uint8_t*)x)[1];
++	((uint8_t*)x)[1] = t;
++#else
+ 	*(uint16_t*)x = bam_swap_endian_2(*(uint16_t*)x);
++#endif
+ 	return x;
+ }
+ static inline uint32_t bam_swap_endian_4(uint32_t v)
+@@ -24,7 +30,16 @@ static inline uint32_t bam_swap_endian_4(uint32_t v)
+ }
+ static inline void *bam_swap_endian_4p(void *x)
+ {
++#ifdef __sparc
++	uint8_t t = ((uint8_t*)x)[0];
++	((uint8_t*)x)[0] = ((uint8_t*)x)[3];
++	((uint8_t*)x)[3] = t;
++	t = ((uint8_t*)x)[1];
++	((uint8_t*)x)[1] = ((uint8_t*)x)[2];
++	((uint8_t*)x)[2] = t;
++#else
+ 	*(uint32_t*)x = bam_swap_endian_4(*(uint32_t*)x);
++#endif
+ 	return x;
+ }
+ static inline uint64_t bam_swap_endian_8(uint64_t v)
+@@ -35,7 +50,22 @@ static inline uint64_t bam_swap_endian_8(uint64_t v)
+ }
+ static inline void *bam_swap_endian_8p(void *x)
+ {
++#ifdef __sparc
++	uint8_t t = ((uint8_t*)x)[0];
++	((uint8_t*)x)[0] = ((uint8_t*)x)[7];
++	((uint8_t*)x)[7] = t;
++	t = ((uint8_t*)x)[1];
++	((uint8_t*)x)[1] = ((uint8_t*)x)[6];
++	((uint8_t*)x)[6] = t;
++	t = ((uint8_t*)x)[2];
++	((uint8_t*)x)[2] = ((uint8_t*)x)[5];
++	((uint8_t*)x)[5] = t;
++	t = ((uint8_t*)x)[3];
++	((uint8_t*)x)[3] = ((uint8_t*)x)[4];
++	((uint8_t*)x)[4] = t;
++#else
+ 	*(uint64_t*)x = bam_swap_endian_8(*(uint64_t*)x);
++#endif
+ 	return x;
+ }
+ 
+diff --git a/bam_import.c b/bam_import.c
+index 4d95c91..04a80f8 100644
+--- a/bam_import.c
++++ b/bam_import.c
+@@ -317,7 +317,11 @@ int sam_read1(tamFile fp, bam_header_t *header, bam1_t *b)
+ 				else if (op == 'B') op = BAM_CBACK;
+ 				else parse_error(fp->n_lines, "invalid CIGAR operation");
+ 				s = t + 1;
++#ifdef __sparc
++	            set_uint32(cigar+i, bam_cigar_gen(x, op));
++#else
+ 				cigar[i] = bam_cigar_gen(x, op);
++#endif
+ 			}
+ 			if (*s) parse_error(fp->n_lines, "unmatched CIGAR operation");
+ 			c->bin = bam_reg2bin(c->pos, bam_calend(c, cigar));
+@@ -389,10 +393,18 @@ int sam_read1(tamFile fp, bam_header_t *header, bam1_t *b)
+ 						*s++ = 'c'; *(int8_t*)s = (int8_t)x;
+ 						s += 1; doff += 2;
+ 					} else if (x >= -32767) {
++#ifdef __sparc
++						*s++ = 's'; set_int16(s, (int16_t)x);
++#else
+ 						*s++ = 's'; *(int16_t*)s = (int16_t)x;
++#endif
+ 						s += 2; doff += 3;
+ 					} else {
++#ifdef __sparc
++						*s++ = 'i'; set_int32(s, (int32_t)x);
++#else
+ 						*s++ = 'i'; *(int32_t*)s = (int32_t)x;
++#endif
+ 						s += 4; doff += 5;
+ 						if (x < -2147483648ll)
+ 							fprintf(stderr, "Parse warning at line %lld: integer %lld is out of range.",
+@@ -403,10 +415,18 @@ int sam_read1(tamFile fp, bam_header_t *header, bam1_t *b)
+ 						*s++ = 'C'; *s++ = (uint8_t)x;
+ 						doff += 2;
+ 					} else if (x <= 65535) {
++#ifdef __sparc
++						*s++ = 'S'; set_uint16(s, (uint16_t)x);
++#else
+ 						*s++ = 'S'; *(uint16_t*)s = (uint16_t)x;
++#endif
+ 						s += 2; doff += 3;
+ 					} else {
++#ifdef __sparc
++						*s++ = 'I'; set_uint32(s, (uint32_t)x);
++#else
+ 						*s++ = 'I'; *(uint32_t*)s = (uint32_t)x;
++#endif
+ 						s += 4; doff += 5;
+ 						if (x > 4294967295ll)
+ 							fprintf(stderr, "Parse warning at line %lld: integer %lld is out of range.",
+@@ -416,12 +436,20 @@ int sam_read1(tamFile fp, bam_header_t *header, bam1_t *b)
+ 			} else if (type == 'f') {
+ 				s = alloc_data(b, doff + 5) + doff;
+ 				*s++ = 'f';
++#ifdef __sparc
++				set_float(s, (float)atof(str->s + 5));
++#else
+ 				*(float*)s = (float)atof(str->s + 5);
++#endif
+ 				s += 4; doff += 5;
+ 			} else if (type == 'd') {
+ 				s = alloc_data(b, doff + 9) + doff;
+ 				*s++ = 'd';
++#ifdef __sparc
++				set_double(s, atof(str->s + 9));
++#else
+ 				*(float*)s = (float)atof(str->s + 9);
++#endif
+ 				s += 8; doff += 9;
+ 			} else if (type == 'Z' || type == 'H') {
+ 				int size = 1 + (str->l - 5) + 1;
+@@ -451,6 +479,17 @@ int sam_read1(tamFile fp, bam_header_t *header, bam1_t *b)
+ 				s = alloc_data(b, doff + 6 * Bsize * n) + doff; // allocate memory
+ 				*s++ = 'B'; *s++ = str->s[5];
+ 				memcpy(s, &n, 4); s += 4; // write the number of elements
++#ifdef __sparc
++				if (str->s[5] == 'c')      while (p < str->s + str->l) *(int8_t*)s = (int8_t)strtol(p, &p, 0), s+=Bsize, ++p;
++				else if (str->s[5] == 'C') while (p < str->s + str->l) *(uint8_t*)s = (uint8_t)strtol(p, &p, 0), s+=Bsize, ++p;
++				else if (str->s[5] == 's') while (p < str->s + str->l) set_int16(s, (int16_t)strtol(p, &p, 0)), s+=Bsize,  ++p; // FIXME: avoid unaligned memory
++				else if (str->s[5] == 'S') while (p < str->s + str->l) set_uint16(s, (uint16_t)strtol(p, &p, 0)), s+=Bsize, ++p;
++				else if (str->s[5] == 'i') while (p < str->s + str->l) set_int32(s, (int32_t)strtol(p, &p, 0)), s+=Bsize,  ++p;
++				else if (str->s[5] == 'I') while (p < str->s + str->l) set_uint32(s, (uint32_t)strtol(p, &p, 0)), s+=Bsize, ++p;
++				else if (str->s[5] == 'f') while (p < str->s + str->l) set_float(s, (float)strtod(p, &p)), s+=Bsize, ++p;
++				else parse_error(fp->n_lines, "unrecognized array type");
++				doff += size;
++#else
+ 				if (str->s[5] == 'c')      while (p < str->s + str->l) ((int8_t*)s)[k++]   = (int8_t)strtol(p, &p, 0),   ++p;
+ 				else if (str->s[5] == 'C') while (p < str->s + str->l) ((uint8_t*)s)[k++]  = (uint8_t)strtol(p, &p, 0),  ++p;
+ 				else if (str->s[5] == 's') while (p < str->s + str->l) ((int16_t*)s)[k++]  = (int16_t)strtol(p, &p, 0),  ++p; // FIXME: avoid unaligned memory
+@@ -460,6 +499,7 @@ int sam_read1(tamFile fp, bam_header_t *header, bam1_t *b)
+ 				else if (str->s[5] == 'f') while (p < str->s + str->l) ((float*)s)[k++]    = (float)strtod(p, &p),       ++p;
+ 				else parse_error(fp->n_lines, "unrecognized array type");
+ 				s += Bsize * n; doff += size;
++#endif
+ 			} else parse_error(fp->n_lines, "unrecognized type");
+ 			if (dret == '\n' || dret == '\r') break;
+ 		}
+diff --git a/bam_mate.c b/bam_mate.c
+index b17c5ad..baba408 100644
+--- a/bam_mate.c
++++ b/bam_mate.c
+@@ -15,8 +15,14 @@ void bam_template_cigar(bam1_t *b1, bam1_t *b2, kstring_t *str)
+ 	kputc((b1->core.flag & BAM_FREAD1)? '1' : '2', str); // segment index
+ 	kputc((b1->core.flag & BAM_FREVERSE)? 'R' : 'F', str); // strand
+ 	for (i = 0, cigar = bam1_cigar(b1); i < b1->core.n_cigar; ++i) {
++#ifdef __sparc
++		uint32_t cigar_i = get_uint32(cigar+i);
++		kputw(bam_cigar_oplen(cigar_i), str);
++		kputc(bam_cigar_opchr(cigar_i), str);
++#else
+ 		kputw(bam_cigar_oplen(cigar[i]), str);
+ 		kputc(bam_cigar_opchr(cigar[i]), str);
++#endif
+ 	}
+ 	end = bam_calend(&b1->core, cigar);
+ 	kputw(b2->core.pos - end, str);
+@@ -24,8 +30,14 @@ void bam_template_cigar(bam1_t *b1, bam1_t *b2, kstring_t *str)
+ 	kputc((b2->core.flag & BAM_FREAD1)? '1' : '2', str); // segment index
+ 	kputc((b2->core.flag & BAM_FREVERSE)? 'R' : 'F', str); // strand
+ 	for (i = 0, cigar = bam1_cigar(b2); i < b2->core.n_cigar; ++i) {
++#ifdef __sparc
++		uint32_t cigar_i = get_uint32(cigar+i);
++		kputw(bam_cigar_oplen(cigar_i), str);
++		kputc(bam_cigar_opchr(cigar_i), str);
++#else
+ 		kputw(bam_cigar_oplen(cigar[i]), str);
+ 		kputc(bam_cigar_opchr(cigar[i]), str);
++#endif
+ 	}
+ 	bam_aux_append(b1, "CT", 'Z', str->l+1, (uint8_t*)str->s); 
+ }
+diff --git a/bam_md.c b/bam_md.c
+index 05a5106..186846d 100644
+--- a/bam_md.c
++++ b/bam_md.c
+@@ -31,7 +31,12 @@ void bam_fillmd1_core(bam1_t *b, char *ref, int flag, int max_nm)
+ 
+ 	str = (kstring_t*)calloc(1, sizeof(kstring_t));
+ 	for (i = y = 0, x = c->pos; i < c->n_cigar; ++i) {
++#ifdef __sparc
++		uint32_t cigar_i = get_uint32(cigar+i);
++		int j, l = cigar_i>>4, op = cigar_i&0xf;
++#else
+ 		int j, l = cigar[i]>>4, op = cigar[i]&0xf;
++#endif
+ 		if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF) {
+ 			for (j = 0; j < l; ++j) {
+ 				int z = y + j;
+@@ -67,7 +72,12 @@ void bam_fillmd1_core(bam1_t *b, char *ref, int flag, int max_nm)
+ 	// apply max_nm
+ 	if (max_nm > 0 && nm >= max_nm) {
+ 		for (i = y = 0, x = c->pos; i < c->n_cigar; ++i) {
++#ifdef __sparc
++			uint32_t cigar_i = get_uint32(cigar+i);
++			int j, l = cigar_i>>4, op = cigar_i&0xf;
++#else
+ 			int j, l = cigar[i]>>4, op = cigar[i]&0xf;
++#endif
+ 			if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF) {
+ 				for (j = 0; j < l; ++j) {
+ 					int z = y + j;
+diff --git a/bam_pileup.c b/bam_pileup.c
+index 054f3e7..d5c07b3 100644
+--- a/bam_pileup.c
++++ b/bam_pileup.c
+@@ -77,11 +77,22 @@ static inline int resolve_cigar2(bam_pileup1_t *p, uint32_t pos, cstate_t *s)
+ 	if (s->k == -1) { // never processed
+ 		is_head = 1;
+ 		if (c->n_cigar == 1) { // just one operation, save a loop
++#ifdef __sparc
++			uint32_t cigar_0 = get_uint32(cigar);
++			if (_cop(cigar_0) == BAM_CMATCH || _cop(cigar_0) == BAM_CEQUAL || _cop(cigar_0) == BAM_CDIFF) s->k = 0, s->x = c->pos, s->y = 0;
++#else
+ 		  if (_cop(cigar[0]) == BAM_CMATCH || _cop(cigar[0]) == BAM_CEQUAL || _cop(cigar[0]) == BAM_CDIFF) s->k = 0, s->x = c->pos, s->y = 0;
++#endif
+ 		} else { // find the first match or deletion
+ 			for (k = 0, s->x = c->pos, s->y = 0; k < c->n_cigar; ++k) {
++#ifdef __sparc
++				uint32_t cigar_k = get_uint32(cigar+k);
++				int op = _cop(cigar_k);
++				int l = _cln(cigar_k);
++#else
+ 				int op = _cop(cigar[k]);
+ 				int l = _cln(cigar[k]);
++#endif
+ 				if (op == BAM_CMATCH || op == BAM_CDEL || op == BAM_CEQUAL || op == BAM_CDIFF) break;
+ 				else if (op == BAM_CREF_SKIP) s->x += l;
+ 				else if (op == BAM_CINS || op == BAM_CSOFT_CLIP) s->y += l;
+@@ -90,40 +101,84 @@ static inline int resolve_cigar2(bam_pileup1_t *p, uint32_t pos, cstate_t *s)
+ 			s->k = k;
+ 		}
+ 	} else { // the read has been processed before
++#ifdef __sparc
++		uint32_t cigar_sk = get_uint32(cigar+s->k);
++		int op, l = _cln(cigar_sk);
++#else
+ 		int op, l = _cln(cigar[s->k]);
++#endif
+ 		if (pos - s->x >= l) { // jump to the next operation
+ 			assert(s->k < c->n_cigar); // otherwise a bug: this function should not be called in this case
++#ifdef __sparc
++			op = _cop(get_uint32(cigar+s->k+1));
++#else
+ 			op = _cop(cigar[s->k+1]);
++#endif
+ 			if (op == BAM_CMATCH || op == BAM_CDEL || op == BAM_CREF_SKIP || op == BAM_CEQUAL || op == BAM_CDIFF) { // jump to the next without a loop
++#ifdef __sprac
++				if (_cop(cigar_sk) == BAM_CMATCH|| _cop(cigar_sk) == BAM_CEQUAL || _cop(cigar_sk) == BAM_CDIFF) s->y += l;
++#else
+ 			  if (_cop(cigar[s->k]) == BAM_CMATCH|| _cop(cigar[s->k]) == BAM_CEQUAL || _cop(cigar[s->k]) == BAM_CDIFF) s->y += l;
++#endif
+ 				s->x += l;
+ 				++s->k;
++#ifdef __sparc
++				cigar_sk = get_uint32(cigar+s->k);
++#endif
+ 			} else { // find the next M/D/N/=/X
++#ifdef __sparc
++			  if (_cop(cigar_sk) == BAM_CMATCH|| _cop(cigar_sk) == BAM_CEQUAL || _cop(cigar_sk) == BAM_CDIFF) s->y += l;
++#else
+ 			  if (_cop(cigar[s->k]) == BAM_CMATCH|| _cop(cigar[s->k]) == BAM_CEQUAL || _cop(cigar[s->k]) == BAM_CDIFF) s->y += l;
++#endif
+ 				s->x += l;
+ 				for (k = s->k + 1; k < c->n_cigar; ++k) {
++#ifdef __sparc
++					uint32_t cigar_k = get_uint32(cigar+k);
++					op = _cop(cigar_k), l = _cln(cigar_k);
++#else
+ 					op = _cop(cigar[k]), l = _cln(cigar[k]);
++#endif
+ 					if (op == BAM_CMATCH || op == BAM_CDEL || op == BAM_CREF_SKIP || op == BAM_CEQUAL || op == BAM_CDIFF) break;
+ 					else if (op == BAM_CINS || op == BAM_CSOFT_CLIP) s->y += l;
+ 				}
+ 				s->k = k;
++#ifdef __sparc
++				cigar_sk = get_uint32(cigar+s->k);
++#endif
+ 			}
+ 			assert(s->k < c->n_cigar); // otherwise a bug
+ 		} // else, do nothing
+ 	}
+ 	{ // collect pileup information
+ 		int op, l;
++#ifdef __sparc
++		uint32_t cigar_sk = get_uint32(cigar+s->k);
++		op = _cop(cigar_sk); l = _cln(cigar_sk);
++#else
+ 		op = _cop(cigar[s->k]); l = _cln(cigar[s->k]);
++#endif
+ 		p->is_del = p->indel = p->is_refskip = 0;
+ 		if (s->x + l - 1 == pos && s->k + 1 < c->n_cigar) { // peek the next operation
++#ifdef __sparc
++			uint32_t cigar_sk1 = get_uint32(cigar+s->k+1);
++			int op2 = _cop(cigar_sk1);
++			int l2 = _cln(cigar_sk1);
++#else
+ 			int op2 = _cop(cigar[s->k+1]);
+ 			int l2 = _cln(cigar[s->k+1]);
++#endif
+ 			if (op2 == BAM_CDEL) p->indel = -(int)l2;
+ 			else if (op2 == BAM_CINS) p->indel = l2;
+ 			else if (op2 == BAM_CPAD && s->k + 2 < c->n_cigar) { // no working for adjacent padding
+ 				int l3 = 0;
+ 				for (k = s->k + 2; k < c->n_cigar; ++k) {
++#ifdef __sparc
++					uint32_t cigar_k = get_uint32(cigar+k);
++					op2 = _cop(cigar_k); l2 = _cln(cigar_k);
++#else
+ 					op2 = _cop(cigar[k]); l2 = _cln(cigar[k]);
++#endif
+ 					if (op2 == BAM_CINS) l3 += l2;
+ 					else if (op2 == BAM_CDEL || op2 == BAM_CMATCH || op2 == BAM_CREF_SKIP || op2 == BAM_CEQUAL || op2 == BAM_CDIFF) break;
+ 				}
+diff --git a/bam_tview.c b/bam_tview.c
+index dac4f15..db4bdbc 100644
+--- a/bam_tview.c
++++ b/bam_tview.c
+@@ -232,8 +232,14 @@ int tv_fetch_func(const bam1_t *b, void *data)
+ 		uint32_t *cigar = bam1_cigar(b); // this is cheating...
+ 		int i;
+ 		for (i = 0; i <b->core.n_cigar; ++i) {
++#ifdef __sparc
++			uint32_t cigar_i = get_uint32(cigar+i);
++			if ((cigar_i&0xf) == BAM_CREF_SKIP)
++				set_uint32(cigar+i, cigar_i>>4<<4 | BAM_CDEL);
++#else
+ 			if ((cigar[i]&0xf) == BAM_CREF_SKIP)
+ 				cigar[i] = cigar[i]>>4<<4 | BAM_CDEL;
++#endif
+ 		}
+ 	}
+ 	bam_lplbuf_push(b, tv->lplbuf);
+diff --git a/misc/Makefile b/misc/Makefile
+index d36e7ac..a4e17aa 100644
+--- a/misc/Makefile
++++ b/misc/Makefile
+@@ -34,7 +34,7 @@ bamcheck.o:bamcheck.c ../faidx.h ../khash.h ../sam.h ../razf.h
+ 		$(CC) $(CFLAGS) -c -I.. -o $@ bamcheck.c
+ 
+ ace2sam:ace2sam.o
+-		$(CC) $(CFLAGS) -o $@ ace2sam.o -lz
++		$(CC) $(CFLAGS) -o $@ ace2sam.o ../kstring.o -lz
+ 
+ wgsim:wgsim.o
+ 		$(CC) $(CFLAGS) -o $@ wgsim.o -lm -lz
+diff --git a/padding.c b/padding.c
+index 3ee8087..5b43a58 100644
+--- a/padding.c
++++ b/padding.c
+@@ -45,16 +45,28 @@ static void unpad_seq(bam1_t *b, kstring_t *s)
+ 	length = 0;
+ 	for (k = 0; k < b->core.n_cigar; ++k) {
+ 		int op, ol;
++#ifdef __sparc
++		uint32_t cigar_k = get_uint32(cigar+k);
++		op = bam_cigar_op(cigar_k);
++		ol = bam_cigar_oplen(cigar_k);
++#else
+ 		op= bam_cigar_op(cigar[k]);
+ 		ol = bam_cigar_oplen(cigar[k]);
++#endif
+ 		if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF || op == BAM_CDEL)
+ 			length += ol;
+ 	}
+ 	ks_resize(s, length);
+ 	for (k = 0, s->l = 0, j = 0; k < b->core.n_cigar; ++k) {
+ 		int op, ol;
++#ifdef __sparc
++		uint32_t cigar_k = get_uint32(cigar+k);
++		op = bam_cigar_op(cigar_k);
++		ol = bam_cigar_oplen(cigar_k);
++#else
+ 		op = bam_cigar_op(cigar[k]);
+ 		ol = bam_cigar_oplen(cigar[k]);
++#endif
+ 		if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF) {
+ 			for (i = 0; i < ol; ++i, ++j) s->s[s->l++] = bam1_seqi(seq, j);
+ 		} else if (op == BAM_CSOFT_CLIP) {
+@@ -216,6 +228,19 @@ int bam_pad2unpad(samfile_t *in, samfile_t *out, faidx_t *fai)
+ 				return -1;
+ 			}
+ 			unpad_seq(b, &q);
++#ifdef __sparc
++	        {
++			uint32_t cigar_0 = get_uint32(cigar+0);
++			if (bam_cigar_op(cigar_0) == BAM_CSOFT_CLIP) {
++				write_cigar(cigar2, n2, m2, cigar_0);
++			} else if (bam_cigar_op(cigar_0) == BAM_CHARD_CLIP) {
++				write_cigar(cigar2, n2, m2, cigar_0);
++				if (b->core.n_cigar > 2 && bam_cigar_op(get_uint32(cigar+1)) == BAM_CSOFT_CLIP) {
++					write_cigar(cigar2, n2, m2, get_uint32(cigar+1));
++				}
++			}
++			}
++#else
+ 			if (bam_cigar_op(cigar[0]) == BAM_CSOFT_CLIP) {
+ 				write_cigar(cigar2, n2, m2, cigar[0]);
+ 			} else if (bam_cigar_op(cigar[0]) == BAM_CHARD_CLIP) {
+@@ -224,6 +249,7 @@ int bam_pad2unpad(samfile_t *in, samfile_t *out, faidx_t *fai)
+ 					write_cigar(cigar2, n2, m2, cigar[1]);
+ 				}
+ 			}
++#endif
+ 			/* Determine CIGAR operator for each base in the aligned read */
+ 			for (i = 0, k = b->core.pos; i < q.l; ++i, ++k)
+ 				q.s[i] = q.s[i]? (r.s[k]? BAM_CMATCH : BAM_CINS) : (r.s[k]? BAM_CDEL : BAM_CPAD);
+@@ -240,6 +266,19 @@ int bam_pad2unpad(samfile_t *in, samfile_t *out, faidx_t *fai)
+ 				} else ++k;
+ 			}
+ 			write_cigar(cigar2, n2, m2, bam_cigar_gen(k, op));
++#ifdef __sparc
++			{
++			uint32_t cigar_e = get_uint32(cigar+b->core.n_cigar-1);
++			if (bam_cigar_op(cigar_e) == BAM_CSOFT_CLIP) {
++				write_cigar(cigar2, n2, m2, cigar_e);
++                        } else if (bam_cigar_op(cigar_e) == BAM_CHARD_CLIP) {
++				if (b->core.n_cigar > 2 && bam_cigar_op(get_uint32(cigar+b->core.n_cigar-2)) == BAM_CSOFT_CLIP) {
++					write_cigar(cigar2, n2, m2, get_uint32(cigar+b->core.n_cigar-2));
++			  	}
++				write_cigar(cigar2, n2, m2, cigar_e);
++			}
++			}
++#else
+ 			if (bam_cigar_op(cigar[b->core.n_cigar-1]) == BAM_CSOFT_CLIP) {
+ 				write_cigar(cigar2, n2, m2, cigar[b->core.n_cigar-1]);
+                         } else if (bam_cigar_op(cigar[b->core.n_cigar-1]) == BAM_CHARD_CLIP) {
+@@ -248,6 +287,7 @@ int bam_pad2unpad(samfile_t *in, samfile_t *out, faidx_t *fai)
+ 			  	}
+ 				write_cigar(cigar2, n2, m2, cigar[b->core.n_cigar-1]);
+ 			}
++#endif
+ 			/* Remove redundant P operators between M/X/=/D operators, e.g. 5M2P10M -> 15M */
+ 			int pre_op, post_op;
+ 			for (i = 2; i < n2; ++i)
+diff --git a/sam_view.c b/sam_view.c
+index 6fc47a9..5baae97 100644
+--- a/sam_view.c
++++ b/sam_view.c
+@@ -45,9 +45,17 @@ static int process_aln(const bam_header_t *h, bam1_t *b)
+ 	if (g_min_qlen > 0) {
+ 		int k, qlen = 0;
+ 		uint32_t *cigar = bam1_cigar(b);
++#ifdef __sparc
++		for (k = 0; k < b->core.n_cigar; ++k) {
++			uint32_t cigar_k = get_uint32(cigar+k);
++			if ((bam_cigar_type(bam_cigar_op(cigar_k))&1) || bam_cigar_op(cigar_k) == BAM_CHARD_CLIP)
++				qlen += bam_cigar_oplen(cigar_k);
++		}
++#else
+ 		for (k = 0; k < b->core.n_cigar; ++k)
+ 			if ((bam_cigar_type(bam_cigar_op(cigar[k]))&1) || bam_cigar_op(cigar[k]) == BAM_CHARD_CLIP)
+ 				qlen += bam_cigar_oplen(cigar[k]);
++#endif
+ 		if (qlen < g_min_qlen) return 1;
+ 	}
+ 	if (b->core.qual < g_min_mapQ || ((b->core.flag & g_flag_on) != g_flag_on) || (b->core.flag & g_flag_off))

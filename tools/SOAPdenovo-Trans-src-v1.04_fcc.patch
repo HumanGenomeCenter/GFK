@@ -1,0 +1,15 @@
+diff --git a/src/Makefile b/src/Makefile
+index aed70a3..37a3382 100644
+--- a/src/Makefile
++++ b/src/Makefile
+@@ -1,6 +1,8 @@
+-CC=             gcc
+-CFLAGS=         -O3 -fomit-frame-pointer -static
++#CC=             gcc
++CC= fccpx
++#CFLAGS=         -O3 -fomit-frame-pointer -static
+ #CFLAGS=         -O3 -g -D_DEBUG
++CFLAGS= -Xg -Kfast
+ DFLAGS= 
+ 
+ OBJS=		arc.o attachPEinfo.o bubble.o check.o compactEdge.o \

@@ -1,0 +1,22 @@
+diff --git a/Makefile b/Makefile
+index a584c7a..358d2c5 100644
+--- a/Makefile
++++ b/Makefile
+@@ -4,10 +4,14 @@
+ #   make git-stamp
+ VERSION=
+ 
+-CC=			gcc
+-CFLAGS=		-g -Wall $(VERSION) -O2
++#CC=			gcc
++CC=			fcc
++#CFLAGS=		-g -Wall $(VERSION) -O2
++CFLAGS=		-Xg -g -Nquickdbg=inf_detail -NRtrap
+ #LDFLAGS=		-Wl,-rpath,\$$ORIGIN/../lib
+-DFLAGS=		-D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -D_USE_KNETFILE -D_CURSES_LIB=1
++LDFLAGS=		-Xg -g -Nquickdbg=inf_detail -NRtrap
++#DFLAGS=		-D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -D_USE_KNETFILE -D_CURSES_LIB=1
++DFLAGS=		-D_USE_KNETFILE
+ KNETFILE_O=	knetfile.o
+ LOBJS=		bgzf.o kstring.o bam_aux.o bam.o bam_import.o sam.o bam_index.o	\
+ 			bam_pileup.o bam_lpileup.o bam_md.o razf.o faidx.o bedidx.o \
