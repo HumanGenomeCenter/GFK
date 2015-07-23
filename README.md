@@ -19,7 +19,6 @@ contact address: Satoshi ITO (sito@hgc.jp)
 
 
 2. How to run
-
 2.1 Prerequisite
 
   Parallel computer and the following software can be installed.
