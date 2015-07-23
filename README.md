@@ -36,32 +36,32 @@ contact address: Satoshi ITO (sito@hgc.jp)
   datasets by Makefile.
 
 
-2.1 Prepare blat
+2.2 Prepare blat
 
   First, prepare blat and FaToTwoBit (blat utility). Then, copy them in
   to bin directory of this package.
 
 
-2.2 Prepare Makefile.in 
+2.3 Prepare Makefile.in 
 
   Sample Makefile.in for K-computer and Linux is located under etc/.
   So, copy appropriate sample to the top directory where this README is
   located, open with an editor, and set GFKDIR to the top directory.
 
 
-2.3 Download tools and reference data
+2.4 Download tools and reference data
 
   Type "make download". This will download archives of external tools
   and reference data.
 
 
-2.4 Compile tools and GFK binaries
+2.5 Compile tools and GFK binaries
 
   Type "make tool" to prepare external tools, and type "make src" to
   prepare GFK binaries under ./bin.
 
 
-2.5 Prepare reference files
+2.6 Prepare reference files
 
   Type "make ref" to prepare reference files under ./bin.
 
@@ -71,7 +71,7 @@ contact address: Satoshi ITO (sito@hgc.jp)
   $ make ref > make-ref.log 2>&1 &
 
 
-2.6 Prepare for test
+2.7 Prepare for test
 
   Change directory to test.
   Then, type "make", and an archive of executables and scripts for submi
@@ -80,7 +80,7 @@ contact address: Satoshi ITO (sito@hgc.jp)
   tory.
 
 
-2.7 Submit jobs
+2.8 Submit jobs
 
   Run GFKpre.sh
 
@@ -124,6 +124,6 @@ contact address: Satoshi ITO (sito@hgc.jp)
   $ pjsub GFKdetect.sh  (on K computer)
 
 
-2.8 Result
+2.9 Result
 
   fusion.0.txt is the final result. Reference output is fusion.0.ref.
