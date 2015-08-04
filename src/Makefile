@@ -11,6 +11,7 @@ TARGET=GFKalign GFKdedup GFKdetect
 .PHONY: all install clean distclean
 .PRECIOUS: %.c
 .SUFFIXES: .c .template
+
 .template.c:
 	sed -e "s%GFKDIR%${INSTDIR}%g" \
 	    -e "s%SHAREDDIR%${SHAREDDIR}%g" $< > $@
